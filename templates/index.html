@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VisionSoC — AI Image Enhancer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #09090f;
+      --surface:   #111120;
+      --panel:     #161628;
+      --border:    rgba(120,120,255,0.12);
+      --border-hi: rgba(120,120,255,0.35);
+      --accent:    #6c63ff;
+      --accent2:   #a78bfa;
+      --glow:      rgba(108,99,255,0.25);
+      --text:      #e8e8f0;
+      --muted:     #8888aa;
+      --success:   #34d399;
+      --danger:    #f87171;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'DM Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── NOISE GRAIN OVERLAY ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.6;
+    }
+
+    /* ── AMBIENT LIGHT BLOBS ── */
+    .blob {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .blob-1 {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(108,99,255,0.18) 0%, transparent 70%);
+      top: -200px; left: -150px;
+      animation: drift 20s ease-in-out infinite alternate;
+    }
+    .blob-2 {
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(167,139,250,0.12) 0%, transparent 70%);
+      bottom: -100px; right: -100px;
+      animation: drift 25s ease-in-out infinite alternate-reverse;
+    }
+    @keyframes drift {
+      from { transform: translate(0, 0) scale(1); }
+      to   { transform: translate(40px, 30px) scale(1.08); }
+    }
+
+    /* ── LAYOUT ── */
+    .wrapper {
+      position: relative; z-index: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 2rem 4rem;
+    }
+
+    /* ── HEADER ── */
+    header {
+      text-align: center;
+      padding: 4rem 0 3rem;
+      animation: fadeUp 0.8s ease both;
+    }
+    .logo-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 18px 6px 10px;
+      font-size: 11px;
+      color: var(--accent2);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 2rem;
+    }
+    .logo-badge .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(2.8rem, 7vw, 5.5rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      background: linear-gradient(135deg, #fff 30%, var(--accent2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 1rem;
+    }
+    h1 span { color: var(--accent); -webkit-text-fill-color: var(--accent); }
+
+    .tagline {
+      font-size: 1rem;
+      color: var(--muted);
+      max-width: 480px;
+      margin: 0 auto 2rem;
+      line-height: 1.7;
+      letter-spacing: 0.01em;
+    }
+
+    /* ── STATS ROW ── */
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 2.5rem;
+      animation: fadeUp 0.9s 0.1s ease both;
+      margin-bottom: 3rem;
+    }
+    .stat { text-align: center; }
+    .stat-value {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--accent2);
+    }
+    .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+
+    /* ── MAIN CARD ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2.5rem;
+      animation: fadeUp 1s 0.2s ease both;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.6;
+    }
+
+    /* ── DROP ZONE ── */
+    .drop-zone {
+      border: 2px dashed var(--border-hi);
+      border-radius: 14px;
+      padding: 3.5rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      background: linear-gradient(180deg, rgba(108,99,255,0.03) 0%, transparent 100%);
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(108,99,255,0.08);
+      transform: scale(1.005);
+    }
+    .drop-icon {
+      width: 56px; height: 56px;
+      margin: 0 auto 1.25rem;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px;
+    }
+    .drop-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.4rem;
+    }
+    .drop-sub { font-size: 13px; color: var(--muted); }
+    .drop-or  { display: inline-block; padding: 0.4rem 1rem; color: var(--muted); font-size: 13px; }
+
+    #file-input { display: none; }
+
+    .btn-browse {
+      display: inline-block;
+      background: var(--panel);
+      border: 1px solid var(--border-hi);
+      color: var(--accent2);
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      padding: 10px 22px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.04em;
+    }
+    .btn-browse:hover {
+      background: rgba(108,99,255,0.15);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── PREVIEW GRID ── */
+    .preview-row {
+      display: none;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 1.8rem;
+    }
+    .preview-row.visible { display: grid; }
+
+    .preview-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 4/3;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .preview-box img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+    }
+    .preview-label {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-align: center;
+      margin-top: 8px;
+    }
+
+    .arrow-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      color: var(--accent);
+      font-size: 22px;
+    }
+    .arrow-box small {
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    /* ── ENHANCE BUTTON ── */
+    .btn-enhance {
+      width: 100%;
+      margin-top: 1.8rem;
+      padding: 16px;
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      color: #fff;
+      font-family: 'Syne', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+      display: none;
+    }
+    .btn-enhance.visible { display: block; }
+    .btn-enhance:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px var(--glow);
+    }
+    .btn-enhance:active { transform: translateY(0); }
+    .btn-enhance:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-enhance .shimmer {
+      position: absolute;
+      top: 0; left: -100%; width: 50%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+      animation: shimmer 2.5s ease infinite;
+    }
+    @keyframes shimmer {
+      to { left: 200%; }
+    }
+
+    /* ── PROGRESS / STATUS ── */
+    .status-bar {
+      display: none;
+      margin-top: 1.4rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+    }
+    .status-bar.visible { display: block; }
+    .status-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border-hi);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .progress-track {
+      height: 4px;
+      background: var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 999px;
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    /* ── RESULT ── */
+    .result-section {
+      display: none;
+      margin-top: 2rem;
+      animation: fadeUp 0.6s ease both;
+    }
+    .result-section.visible { display: block; }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.2rem;
+    }
+    .result-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--success);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .check-icon {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--success);
+      color: #09090f;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .compare-item { }
+    .compare-img-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 4/3;
+    }
+    .compare-img-wrap img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .compare-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .compare-label span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+    .badge {
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .badge-original { background: rgba(136,136,170,0.12); color: var(--muted); border: 1px solid rgba(136,136,170,0.2); }
+    .badge-enhanced { background: rgba(52,211,153,0.1); color: var(--success); border: 1px solid rgba(52,211,153,0.25); }
+
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      margin-top: 1.4rem;
+      padding: 14px;
+      background: transparent;
+      border: 1px solid var(--border-hi);
+      color: var(--accent2);
+      font-family: 'Syne', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border-radius: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+      letter-spacing: 0.05em;
+    }
+    .btn-download:hover {
+      background: rgba(108,99,255,0.12);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── ERROR ── */
+    .error-toast {
+      display: none;
+      margin-top: 1rem;
+      background: rgba(248,113,113,0.08);
+      border: 1px solid rgba(248,113,113,0.25);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: var(--danger);
+    }
+    .error-toast.visible { display: block; }
+
+    /* ── FEATURES ROW ── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-top: 2rem;
+      animation: fadeUp 1s 0.35s ease both;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.4rem;
+    }
+    .feature-icon {
+      font-size: 22px;
+      margin-bottom: 0.75rem;
+      display: block;
+    }
+    .feature-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 0.4rem;
+    }
+    .feature-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+    /* ── FOOTER ── */
+    footer {
+      text-align: center;
+      padding: 3rem 0 1rem;
+      font-size: 12px;
+      color: var(--muted);
+      animation: fadeUp 1s 0.5s ease both;
+    }
+    footer a { color: var(--accent2); text-decoration: none; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 640px) {
+      .preview-row { grid-template-columns: 1fr; }
+      .compare-grid { grid-template-columns: 1fr; }
+      .features { grid-template-columns: 1fr; }
+      .stats { gap: 1.5rem; flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-badge">
+      <span class="dot"></span>
+      ESRGAN · Powered by PyTorch
+    </div>
+    <h1>Vision<span>SoC</span></h1>
+    <p class="tagline">
+      Transform low-resolution images into stunning high-quality visuals using Enhanced Super-Resolution GANs.
+    </p>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">4×</div>
+        <div class="stat-label">Upscale Factor</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">23</div>
+        <div class="stat-label">RRDB Blocks</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">16MB</div>
+        <div class="stat-label">Max File Size</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN UPLOAD CARD -->
+  <div class="card">
+
+    <!-- Drop Zone -->
+    <div class="drop-zone" id="drop-zone">
+      <div class="drop-icon">🖼</div>
+      <div class="drop-title">Drop your image here</div>
+      <div class="drop-sub">PNG, JPG, JPEG, BMP, WEBP supported</div>
+      <div class="drop-or">— or —</div><br/>
+      <label class="btn-browse" for="file-input">Browse Files</label>
+      <input type="file" id="file-input" accept=".png,.jpg,.jpeg,.bmp,.webp" />
+    </div>
+
+    <!-- Preview (before enhance) -->
+    <div class="preview-row" id="preview-row">
+      <div>
+        <div class="preview-box">
+          <img id="preview-img" src="" alt="Preview" />
+        </div>
+        <div class="preview-label">Original</div>
+      </div>
+      <div class="arrow-box">
+        <span>→</span>
+        <small>ESRGAN</small>
+      </div>
+      <div>
+        <div class="preview-box" style="background: rgba(108,99,255,0.05); border-style: dashed;">
+          <span style="font-size: 13px; color: var(--muted);">Enhanced preview</span>
+        </div>
+        <div class="preview-label">Enhanced (4×)</div>
+      </div>
+    </div>
+
+    <!-- Enhance Button -->
+    <button class="btn-enhance" id="btn-enhance">
+      <div class="shimmer"></div>
+      ✦ Enhance Image
+    </button>
+
+    <!-- Status / Progress -->
+    <div class="status-bar" id="status-bar">
+      <div class="status-header">
+        <div class="spinner"></div>
+        <span id="status-text">Initializing model...</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div class="error-toast" id="error-toast"></div>
+
+    <!-- Result -->
+    <div class="result-section" id="result-section">
+      <div class="result-header">
+        <div class="result-title">
+          <span class="check-icon">✓</span>
+          Enhancement Complete
+        </div>
+        <button class="btn-browse" onclick="resetAll()" style="font-size:12px; padding: 6px 14px;">
+          + New Image
+        </button>
+      </div>
+
+      <div class="compare-grid">
+        <div class="compare-item">
+          <div class="compare-img-wrap">
+            <img id="result-original" src="" alt="Original" />
+          </div>
+          <div class="compare-label">
+            <span>Original</span>
+            <span class="badge badge-original">Low Res</span>
+          </div>
+        </div>
+        <div class="compare-item">
+          <div class="compare-img-wrap">
+            <img id="result-enhanced" src="" alt="Enhanced" />
+          </div>
+          <div class="compare-label">
+            <span>Enhanced</span>
+            <span class="badge badge-enhanced">4× ESRGAN</span>
+          </div>
+        </div>
+      </div>
+
+      <a id="download-link" class="btn-download" href="#" download>
+        ↓ Download Enhanced Image
+      </a>
+    </div>
+
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features">
+    <div class="feature">
+      <span class="feature-icon">🧠</span>
+      <div class="feature-title">RRDB Architecture</div>
+      <div class="feature-desc">23 Residual-in-Residual Dense Blocks preserve fine textures and recover lost detail.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">⚡</span>
+      <div class="feature-title">GPU Accelerated</div>
+      <div class="feature-desc">Automatically uses CUDA if available for lightning-fast inference on your machine.</div>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🎯</span>
+      <div class="feature-title">4× Super-Resolution</div>
+      <div class="feature-desc">Upscales images to 4× their original resolution with perceptually sharp results.</div>
+    </div>
+  </div>
+
+  <footer>
+    VisionSoC · Built with <a href="https://github.com/xinntao/ESRGAN">ESRGAN</a> + Flask + PyTorch &nbsp;·&nbsp;
+    <a href="https://github.com/sibisiddharth8/VisionSoC">GitHub</a>
+  </footer>
+
+</div>
+
+<script>
+  const dropZone   = document.getElementById('drop-zone');
+  const fileInput  = document.getElementById('file-input');
+  const previewRow = document.getElementById('preview-row');
+  const previewImg = document.getElementById('preview-img');
+  const btnEnhance = document.getElementById('btn-enhance');
+  const statusBar  = document.getElementById('status-bar');
+  const statusText = document.getElementById('status-text');
+  const progressFill = document.getElementById('progress-fill');
+  const resultSection = document.getElementById('result-section');
+  const errorToast = document.getElementById('error-toast');
+  const downloadLink = document.getElementById('download-link');
+
+  let selectedFile = null;
+
+  // ── Drag & Drop ──────────────────────────────────────────────────────────
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+
+  // ── Handle selected file ─────────────────────────────────────────────────
+  function handleFile(file) {
+    selectedFile = file;
+    hideError();
+    resultSection.classList.remove('visible');
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      previewImg.src = e.target.result;
+      previewRow.classList.add('visible');
+      btnEnhance.classList.add('visible');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ── Enhance ──────────────────────────────────────────────────────────────
+  btnEnhance.addEventListener('click', async () => {
+    if (!selectedFile) return;
+
+    btnEnhance.disabled = true;
+    statusBar.classList.add('visible');
+    resultSection.classList.remove('visible');
+    hideError();
+
+    // Fake progress while backend works
+    const steps = [
+      { text: 'Loading ESRGAN model...', pct: 15 },
+      { text: 'Preprocessing image tensor...', pct: 30 },
+      { text: 'Running super-resolution...', pct: 55 },
+      { text: 'Upsampling 4× with RRDB blocks...', pct: 75 },
+      { text: 'Reconstructing high-res output...', pct: 90 },
+    ];
+    let stepIdx = 0;
+    const ticker = setInterval(() => {
+      if (stepIdx < steps.length) {
+        const s = steps[stepIdx++];
+        statusText.textContent = s.text;
+        progressFill.style.width = s.pct + '%';
+      }
+    }, 900);
+
+    const form = new FormData();
+    form.append('image', selectedFile);
+
+    try {
+      const res  = await fetch('/enhance', { method: 'POST', body: form });
+      const data = await res.json();
+
+      clearInterval(ticker);
+
+      if (data.success) {
+        progressFill.style.width = '100%';
+        statusText.textContent = 'Done!';
+
+        setTimeout(() => {
+          statusBar.classList.remove('visible');
+
+          document.getElementById('result-original').src = data.original + '?t=' + Date.now();
+          document.getElementById('result-enhanced').src = data.enhanced + '?t=' + Date.now();
+          downloadLink.href = data.enhanced;
+          downloadLink.download = 'enhanced_' + selectedFile.name;
+
+          resultSection.classList.add('visible');
+          btnEnhance.disabled = false;
+        }, 500);
+      } else {
+        throw new Error(data.message || 'Enhancement failed');
+      }
+    } catch (err) {
+      clearInterval(ticker);
+      statusBar.classList.remove('visible');
+      showError(err.message);
+      btnEnhance.disabled = false;
+    }
+  });
+
+  function showError(msg) {
+    errorToast.textContent = '⚠ ' + msg;
+    errorToast.classList.add('visible');
+  }
+  function hideError() {
+    errorToast.classList.remove('visible');
+  }
+
+  function resetAll() {
+    selectedFile = null;
+    fileInput.value = '';
+    previewRow.classList.remove('visible');
+    btnEnhance.classList.remove('visible');
+    resultSection.classList.remove('visible');
+    statusBar.classList.remove('visible');
+    progressFill.style.width = '0%';
+    hideError();
+  }
+</script>
+</body>
+</html>
